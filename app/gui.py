@@ -7,6 +7,7 @@ progress/status updates flow back to the widgets via Qt signals.
 
 from __future__ import annotations
 
+import os
 from typing import Dict, List
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
@@ -60,6 +61,8 @@ STATUS_COLORS: Dict[DownloadStatus, str] = {
     DownloadStatus.FAILED: "#dc3545",
     DownloadStatus.CANCELED: "#fd7e14",
 }
+# Used when a status has no explicit colour assigned above.
+DEFAULT_STATUS_COLOR = "#000000"
 
 
 class DownloadWorker(QObject):
@@ -127,8 +130,9 @@ class MainWindow(QWidget):
 
         self._settings = Settings()
         self._items: List[DownloadItem] = []
-        # Map item id -> table row for fast lookups when signals arrive.
+        # Maps keyed by the stable item id for fast lookups when signals arrive.
         self._row_by_id: Dict[int, int] = {}
+        self._item_by_id: Dict[int, DownloadItem] = {}
         self._progress_bars: Dict[int, QProgressBar] = {}
 
         self._thread: QThread | None = None
@@ -341,10 +345,14 @@ class MainWindow(QWidget):
             self._append_row(item)
             added += 1
 
-        # Persist the chosen format/quality for next time.
-        self._settings.set("last_output_format", fmt.value)
-        self._settings.set("last_video_quality", video_quality.label)
-        self._settings.set("last_audio_quality", audio_quality.label)
+        # Persist the chosen format/quality for next time (single disk write).
+        self._settings.update(
+            {
+                "last_output_format": fmt.value,
+                "last_video_quality": video_quality.label,
+                "last_audio_quality": audio_quality.label,
+            }
+        )
 
         self._url_input.clear()
 
@@ -370,6 +378,7 @@ class MainWindow(QWidget):
         row = self._table.rowCount()
         self._table.insertRow(row)
         self._row_by_id[item.item_id] = row
+        self._item_by_id[item.item_id] = item
 
         url_item = QTableWidgetItem(item.url)
         # Stash the stable item id on the row so we can recover it after rows
@@ -384,7 +393,9 @@ class MainWindow(QWidget):
         )
 
         status_item = QTableWidgetItem(item.status.value)
-        status_item.setForeground(QColor(STATUS_COLORS[item.status]))
+        status_item.setForeground(
+            QColor(STATUS_COLORS.get(item.status, DEFAULT_STATUS_COLOR))
+        )
         self._table.setItem(row, COL_STATUS, status_item)
 
         progress = QProgressBar()
@@ -420,6 +431,7 @@ class MainWindow(QWidget):
         if item_id is not None:
             self._items = [i for i in self._items if i.item_id != item_id]
             self._progress_bars.pop(item_id, None)
+            self._item_by_id.pop(item_id, None)
         self._table.removeRow(row)
 
     def _on_clear_queue(self) -> None:
@@ -429,6 +441,7 @@ class MainWindow(QWidget):
         self._table.setRowCount(0)
         self._items.clear()
         self._row_by_id.clear()
+        self._item_by_id.clear()
         self._progress_bars.clear()
         self._set_status("Queue cleared.")
 
@@ -457,6 +470,18 @@ class MainWindow(QWidget):
         if not self._download_dir:
             self._warn("Please choose a save location first.")
             return
+        if not os.path.isdir(self._download_dir):
+            self._warn(
+                "The save location no longer exists. Please choose a folder "
+                "again."
+            )
+            return
+        if not os.access(self._download_dir, os.W_OK):
+            self._warn(
+                "The save location is not writable. Please choose a different "
+                "folder."
+            )
+            return
 
         pending = [i for i in self._items if i.status is DownloadStatus.PENDING]
         if not pending:
@@ -471,8 +496,15 @@ class MainWindow(QWidget):
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(self._on_worker_progress)
         self._worker.item_status.connect(self._on_worker_status)
-        self._worker.finished.connect(self._on_queue_finished)
+        # Canonical Qt teardown: when the worker is done it stops the thread's
+        # event loop and schedules its own deletion (while its event loop is
+        # still alive to process the deferred delete). GUI tidy-up and thread
+        # deletion run off the thread's ``finished`` signal, by which point the
+        # thread has actually stopped — so we never block the GUI on wait().
         self._worker.finished.connect(self._thread.quit)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._on_queue_finished)
+        self._thread.finished.connect(self._thread.deleteLater)
 
         self._set_running_ui(True)
         self._set_status("Downloading…")
@@ -510,29 +542,55 @@ class MainWindow(QWidget):
         if row is None or item is None:
             return
 
+        self._update_status_cell(row, status, message)
+
+        if status is DownloadStatus.COMPLETED:
+            self._apply_completed(row, item_id, item)
+        elif status is DownloadStatus.FAILED:
+            self._apply_failed(row, message)
+
+    def _update_status_cell(
+        self, row: int, status: DownloadStatus, message: str
+    ) -> None:
+        """Set the text, colour and tooltip of a row's status cell."""
         status_cell = self._table.item(row, COL_STATUS)
         if status_cell is not None:
             status_cell.setText(status.value)
-            status_cell.setForeground(QColor(STATUS_COLORS[status]))
+            status_cell.setForeground(
+                QColor(STATUS_COLORS.get(status, DEFAULT_STATUS_COLOR))
+            )
             status_cell.setToolTip(message)
 
-        if status is DownloadStatus.COMPLETED:
-            location_cell = self._table.item(row, COL_LOCATION)
-            if location_cell is not None:
-                location_cell.setText(item.save_path)
-            bar = self._progress_bars.get(item_id)
-            if bar is not None:
-                bar.setValue(100)
-        elif status is DownloadStatus.FAILED:
-            location_cell = self._table.item(row, COL_LOCATION)
-            if location_cell is not None:
-                location_cell.setText(message)
+    def _apply_completed(
+        self, row: int, item_id: int, item: DownloadItem
+    ) -> None:
+        """Reflect a successful download: show the save path and fill the bar."""
+        location_cell = self._table.item(row, COL_LOCATION)
+        if location_cell is not None:
+            location_cell.setText(item.save_path)
+            location_cell.setToolTip(item.save_path)
+        bar = self._progress_bars.get(item_id)
+        if bar is not None:
+            bar.setValue(100)
+
+    def _apply_failed(self, row: int, message: str) -> None:
+        """Reflect a failed download.
+
+        The error text lives on the status cell's tooltip (set by
+        :meth:`_update_status_cell`); the Save Location column is left empty so
+        it never conflates an error message with a real file path.
+        """
+        location_cell = self._table.item(row, COL_LOCATION)
+        if location_cell is not None:
+            location_cell.setText("")
 
     @Slot()
     def _on_queue_finished(self) -> None:
-        """Tidy up after the worker thread has finished."""
-        if self._thread is not None:
-            self._thread.wait()
+        """Tidy up after the worker thread has finished.
+
+        Connected to ``QThread.finished``, so the thread has already stopped;
+        the worker and thread objects delete themselves via ``deleteLater``.
+        """
         self._thread = None
         self._worker = None
         self._set_running_ui(False)
@@ -581,10 +639,7 @@ class MainWindow(QWidget):
                 self._row_by_id[item_id] = row
 
     def _find_item(self, item_id: int) -> DownloadItem | None:
-        for item in self._items:
-            if item.item_id == item_id:
-                return item
-        return None
+        return self._item_by_id.get(item_id)
 
     def _set_status(self, text: str) -> None:
         self._status_label.setText(text)

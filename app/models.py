@@ -51,13 +51,6 @@ class VideoQuality(enum.Enum):
         self.label = label
         self.max_height = max_height
 
-    @classmethod
-    def from_label(cls, label: str) -> "VideoQuality":
-        for member in cls:
-            if member.label == label:
-                return member
-        return cls.BEST
-
 
 class AudioQuality(enum.Enum):
     """Preferred audio bitrate for MP3 extraction.
@@ -74,13 +67,6 @@ class AudioQuality(enum.Enum):
     def __init__(self, label: str, bitrate_kbps: Optional[int]) -> None:
         self.label = label
         self.bitrate_kbps = bitrate_kbps
-
-    @classmethod
-    def from_label(cls, label: str) -> "AudioQuality":
-        for member in cls:
-            if member.label == label:
-                return member
-        return cls.BEST
 
 
 class DownloadStatus(enum.Enum):

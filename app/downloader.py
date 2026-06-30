@@ -11,8 +11,10 @@ ffmpeg, and reports progress and errors through callbacks.
 
 from __future__ import annotations
 
+import glob
 import os
 import shutil
+import threading
 from typing import Callable, Optional
 
 from .logger import logger
@@ -72,18 +74,20 @@ class Downloader:
     ) -> None:
         self._progress_callback = progress_callback
         self._status_callback = status_callback
-        # Set by request_cancel(); checked from the yt-dlp progress hook.
-        self._cancel_requested = False
+        # Set by request_cancel(); checked from the yt-dlp progress hook. An
+        # Event is used so the flag is safely shared between the GUI thread
+        # (which requests cancellation) and the worker thread (which polls it).
+        self._cancel_requested = threading.Event()
 
     # -- Public API --------------------------------------------------------
 
     def request_cancel(self) -> None:
         """Ask the in-flight download to stop at the next opportunity."""
-        self._cancel_requested = True
+        self._cancel_requested.set()
 
     def reset_cancel(self) -> None:
         """Clear any pending cancel request before starting a new item."""
-        self._cancel_requested = False
+        self._cancel_requested.clear()
 
     def download(self, item: DownloadItem, destination_dir: str) -> None:
         """Download a single item into ``destination_dir``.
@@ -119,6 +123,10 @@ class Downloader:
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(item.url, download=True)
+                if info is None:
+                    raise RuntimeError(
+                        "yt-dlp returned no metadata for this URL."
+                    )
                 # Resolve the final output filename after post-processing.
                 item.title = info.get("title", item.title)
                 item.save_path = self._resolve_output_path(
@@ -217,7 +225,7 @@ class Downloader:
 
         def hook(data: dict) -> None:
             # Honour cancellation requests by aborting the download.
-            if self._cancel_requested:
+            if self._cancel_requested.is_set():
                 raise DownloadCanceled()
 
             status = data.get("status")
@@ -255,7 +263,10 @@ class Downloader:
         """Determine the final file path after post-processing.
 
         Post-processors (audio extraction / remuxing) change the extension, so
-        we rebuild the path from the resolved title and target extension.
+        we rebuild the path from the resolved title and target extension. The
+        returned path is the *predicted* location: it normally exists, but if
+        the prediction misses (unusual post-processor output) we fall back to
+        any sibling file that shares the same stem before returning the guess.
         """
 
         try:
@@ -268,8 +279,15 @@ class Downloader:
         candidate = f"{root}.{item.output_format.file_extension}"
         if os.path.exists(candidate):
             return candidate
-        # If the predicted file is missing, return whatever we computed so the
-        # user still gets a meaningful location in the GUI.
+
+        # Predicted file is missing: look for a sibling produced from the same
+        # stem (e.g. a different extension chosen by the post-processor).
+        for path in glob.glob(f"{glob.escape(root)}.*"):
+            if os.path.isfile(path):
+                return path
+
+        # Nothing on disk matched; return the predicted path so the GUI still
+        # shows a meaningful location.
         return candidate
 
     def _report_progress(
