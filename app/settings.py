@@ -78,6 +78,11 @@ class Settings:
         self._data[key] = value
         self.save()
 
+    def update(self, values: Dict[str, Any]) -> None:
+        """Update several settings at once, persisting with a single write."""
+        self._data.update(values)
+        self.save()
+
     @staticmethod
     def _default_download_dir() -> str:
         """Best-effort guess at the user's Downloads folder."""
