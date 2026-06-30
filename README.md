@@ -69,6 +69,37 @@ run on a background thread so the interface never freezes.
 
 ## Installation
 
+### Quick start (automated setup script)
+
+The repository ships with a one-step setup script that creates a virtual
+environment, installs/upgrades the Python dependencies, **and** installs or
+updates **ffmpeg** via your platform's package manager. Re-running it brings an
+existing install up to date.
+
+- **macOS / Linux**
+
+  ```bash
+  ./setup.sh          # set up / update
+  ./setup.sh --run    # set up / update, then launch the app
+  ```
+
+- **Windows (PowerShell)**
+
+  ```powershell
+  ./setup.ps1         # set up / update
+  ./setup.ps1 -Run    # set up / update, then launch the app
+  # If you hit an execution-policy error:
+  #   powershell -ExecutionPolicy Bypass -File .\setup.ps1
+  ```
+
+The script uses Homebrew on macOS; apt/dnf/pacman/zypper/apk on Linux; and
+winget or Chocolatey on Windows. If none of those package managers is present,
+it prints manual ffmpeg install instructions and continues.
+
+Prefer to do it by hand? Follow the manual steps below.
+
+### Manual setup
+
 ### 1. Clone and create a virtual environment
 
 ```bash
