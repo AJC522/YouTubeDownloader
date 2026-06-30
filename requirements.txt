@@ -1,0 +1,12 @@
+# Video Download Manager dependencies
+# Install with:  pip install -r requirements.txt
+
+# GUI framework (Qt for Python).
+PySide6>=6.6.0
+
+# Backend video/audio downloader. Kept reasonably fresh because sites change
+# frequently; upgrade with `pip install -U yt-dlp` if downloads start failing.
+yt-dlp>=2024.1.0
+
+# NOTE: ffmpeg is an external system dependency (NOT a pip package) required for
+# MP3 extraction and MP4 muxing. See the README for installation instructions.
