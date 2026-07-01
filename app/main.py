@@ -13,8 +13,20 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from .gui import MainWindow
-from .logger import logger
+try:
+    # Normal case: run as a module, e.g. ``python -m app.main``.
+    from .gui import MainWindow
+    from .logger import logger
+except ImportError:
+    # Fallback: the file was executed directly (``python app/main.py`` or via an
+    # IDE "Run" button), so there is no parent package for relative imports.
+    # Add the project root to ``sys.path`` and use absolute imports instead.
+    import os
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from app.gui import MainWindow
+    from app.logger import logger
 
 
 def main() -> int:
