@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 #
-# Video Download Manager — setup / startup script (macOS & Linux)
+# Video Download Manager — one-step setup & launch (macOS & Linux)
 # -----------------------------------------------------------------
-# Installs and updates everything the app needs in one step:
-#   1. A Python virtual environment (.venv)
-#   2. The Python dependencies from requirements.txt (upgraded to latest
-#      allowed versions)
-#   3. ffmpeg (external system dependency) via the platform package manager,
-#      installing it if missing or updating it if already present
+# Run this once and you're done:
 #
-# Re-running this script is safe: it brings an existing setup up to date.
+#   ./setup.sh
 #
-# Usage:
-#   ./setup.sh            # set up / update, then exit
-#   ./setup.sh --run      # set up / update, then launch the app
+# It creates a private Python environment (.venv), installs/updates all
+# dependencies — including a bundled ffmpeg, so there is nothing else to
+# install — and then launches the app.
+#
+# Re-running it is always safe: it updates an existing install (useful when
+# downloads stop working because a site changed and yt-dlp needs updating).
+#
+# Options:
+#   ./setup.sh                # set up / update, then launch the app
+#   ./setup.sh --setup-only   # set up / update, but don't launch
 #
 set -euo pipefail
 
@@ -23,6 +25,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 VENV_DIR=".venv"
+LAUNCH=1
+case "${1:-}" in
+    --setup-only|--no-run) LAUNCH=0 ;;
+    --run|"") ;;  # --run kept for backwards compatibility; launching is now the default.
+    *) echo "Unknown option: $1 (use --setup-only to skip launching)"; exit 1 ;;
+esac
 
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
@@ -45,13 +53,13 @@ done
 
 if [ -z "$PYTHON" ]; then
     err "Python 3.9+ is required but was not found on your PATH."
-    err "Install Python 3.9 or newer and re-run this script."
+    err "Install Python from https://www.python.org/downloads/ and re-run this script."
     exit 1
 fi
 info "Using Python: $("$PYTHON" --version 2>&1) ($(command -v "$PYTHON"))"
 
 # ---------------------------------------------------------------------------
-# 2. Create / reuse the virtual environment and upgrade Python dependencies
+# 2. Create / reuse the virtual environment and install dependencies
 # ---------------------------------------------------------------------------
 if [ ! -d "$VENV_DIR" ]; then
     info "Creating virtual environment in $VENV_DIR"
@@ -63,86 +71,43 @@ fi
 # Use the venv's interpreter directly (avoids needing to 'activate').
 VENV_PY="$VENV_DIR/bin/python"
 
-info "Upgrading pip, setuptools and wheel"
-"$VENV_PY" -m pip install --quiet --upgrade pip setuptools wheel
+info "Upgrading pip"
+"$VENV_PY" -m pip install --quiet --upgrade pip
 
-info "Installing / upgrading Python dependencies from requirements.txt"
+info "Installing / updating dependencies (GUI, yt-dlp and bundled ffmpeg)"
 # --upgrade pulls the newest versions permitted by requirements.txt so the
 # install stays current on every run.
 "$VENV_PY" -m pip install --upgrade -r requirements.txt
 
 # ---------------------------------------------------------------------------
-# 3. Install / update ffmpeg via the platform package manager
+# 3. Verify everything the app needs is in place
 # ---------------------------------------------------------------------------
-install_or_update_ffmpeg() {
-    local os
-    os="$(uname -s)"
+info "Checking the installation"
+if "$VENV_PY" - <<'EOF'
+import sys
+sys.path.insert(0, ".")
+from app.downloader import ffmpeg_source, ytdlp_version
 
-    case "$os" in
-        Darwin)
-            if have brew; then
-                if brew list ffmpeg >/dev/null 2>&1; then
-                    info "Updating ffmpeg via Homebrew"
-                    brew upgrade ffmpeg || info "ffmpeg is already up to date."
-                else
-                    info "Installing ffmpeg via Homebrew"
-                    brew install ffmpeg
-                fi
-            else
-                warn "Homebrew not found. Install it from https://brew.sh/ and then run:"
-                warn "    brew install ffmpeg"
-            fi
-            ;;
-        Linux)
-            if have apt-get; then
-                info "Installing / updating ffmpeg via apt"
-                sudo apt-get update
-                sudo apt-get install -y --only-upgrade ffmpeg || sudo apt-get install -y ffmpeg
-            elif have dnf; then
-                info "Installing / updating ffmpeg via dnf"
-                sudo dnf install -y ffmpeg || sudo dnf upgrade -y ffmpeg
-            elif have pacman; then
-                info "Installing / updating ffmpeg via pacman"
-                sudo pacman -S --noconfirm --needed ffmpeg
-            elif have zypper; then
-                info "Installing / updating ffmpeg via zypper"
-                sudo zypper install -y ffmpeg || sudo zypper update -y ffmpeg
-            elif have apk; then
-                info "Installing / updating ffmpeg via apk"
-                sudo apk add --upgrade ffmpeg
-            else
-                warn "No supported package manager found (apt, dnf, pacman, zypper, apk)."
-                warn "Please install ffmpeg manually using your distribution's tools."
-            fi
-            ;;
-        *)
-            warn "Unsupported OS '$os'. Please install ffmpeg manually."
-            ;;
-    esac
-}
-
-install_or_update_ffmpeg
-
-# Verify ffmpeg ended up on the PATH (mirrors the app's shutil.which check).
-if have ffmpeg; then
-    info "ffmpeg is available: $(ffmpeg -version 2>/dev/null | head -n1)"
+version = ytdlp_version()
+source, path = ffmpeg_source()
+print(f"    yt-dlp {version}")
+print(f"    ffmpeg: {source}" + (f" ({path})" if path else ""))
+sys.exit(0 if version and source != "missing" else 1)
+EOF
+then
+    info "Everything is ready."
 else
-    warn "ffmpeg still does not appear to be on your PATH."
-    warn "MP3 extraction and high-resolution MP4 muxing will not work until it is."
+    warn "Something is missing — see the lines above. Try re-running this script."
 fi
 
-info "Setup complete."
-
 # ---------------------------------------------------------------------------
-# 4. Optionally launch the application
+# 4. Launch the application
 # ---------------------------------------------------------------------------
-if [ "${1:-}" = "--run" ]; then
+if [ "$LAUNCH" = 1 ]; then
     info "Launching Video Download Manager"
     exec "$VENV_PY" -m app.main
 else
     echo
-    info "To run the app:"
-    echo "    $VENV_PY -m app.main"
-    info "Or re-run this script with --run to launch it now:"
-    echo "    ./setup.sh --run"
+    info "Setup complete. To run the app later:"
+    echo "    ./setup.sh"
 fi

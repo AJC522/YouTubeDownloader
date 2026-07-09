@@ -26,6 +26,8 @@ class Settings:
         "last_output_format": "MP4 video",
         "last_video_quality": "Best available",
         "last_audio_quality": "Best available",
+        # Set to True after the one-time welcome message has been shown.
+        "first_run_done": False,
     }
 
     def __init__(self, file_path: Path | None = None) -> None:

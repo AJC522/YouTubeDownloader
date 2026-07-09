@@ -10,8 +10,8 @@ from __future__ import annotations
 import os
 from typing import Dict, List
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -31,8 +31,10 @@ from PySide6.QtWidgets import (
 
 from .downloader import (
     Downloader,
+    ffmpeg_source,
     is_ffmpeg_available,
     is_ytdlp_available,
+    ytdlp_version,
 )
 from .logger import get_log_file_path, logger
 from .models import (
@@ -143,6 +145,7 @@ class MainWindow(QWidget):
         self._build_ui()
         self._restore_last_choices()
         self._check_dependencies()
+        self._show_welcome_if_first_run()
 
     # -- UI construction ---------------------------------------------------
 
@@ -247,6 +250,12 @@ class MainWindow(QWidget):
         self._choose_folder_button = QPushButton("Choose Folder")
         self._choose_folder_button.clicked.connect(self._on_choose_folder)
         layout.addWidget(self._choose_folder_button)
+        self._open_folder_button = QPushButton("Open Folder")
+        self._open_folder_button.setToolTip(
+            "Open the download folder in your file manager."
+        )
+        self._open_folder_button.clicked.connect(self._on_open_folder)
+        layout.addWidget(self._open_folder_button)
         return layout
 
     def _build_action_row(self) -> QHBoxLayout:
@@ -283,24 +292,57 @@ class MainWindow(QWidget):
         self._on_format_changed()
 
     def _check_dependencies(self) -> None:
-        """Warn the user up-front if yt-dlp or ffmpeg are missing."""
+        """Warn the user up-front if yt-dlp or ffmpeg are missing.
+
+        Both normally install automatically with the app's Python
+        dependencies (ffmpeg ships inside the imageio-ffmpeg package), so a
+        warning here means the install is incomplete — the fix is always to
+        re-run the setup script.
+        """
         problems = []
         if not is_ytdlp_available():
-            problems.append(
-                "• yt-dlp is not installed. Run 'pip install -r requirements.txt'."
-            )
+            problems.append("• yt-dlp (the download engine) is not installed.")
         if not is_ffmpeg_available():
             problems.append(
-                "• ffmpeg was not found on your PATH. MP3 extraction and some "
-                "MP4 downloads will fail. See the README for install steps."
+                "• ffmpeg could not be found, so MP3 conversion is disabled "
+                "and MP4 downloads are limited to lower resolutions."
             )
         if problems:
             QMessageBox.warning(
                 self,
-                "Missing dependencies",
-                "Some features may not work:\n\n" + "\n".join(problems),
+                "Setup is incomplete",
+                "Some parts of the app are missing:\n\n"
+                + "\n".join(problems)
+                + "\n\nTo fix this, re-run the setup script that came with "
+                "the app (setup.sh on macOS/Linux, setup.bat on Windows), "
+                "or run 'pip install -r requirements.txt'.",
             )
-            self._set_status("Warning: missing dependencies (see log).")
+            self._set_status("Warning: setup incomplete (see log).")
+        else:
+            source, _ = ffmpeg_source()
+            logger.info(
+                "Dependencies OK: yt-dlp %s, ffmpeg (%s).",
+                ytdlp_version(),
+                source,
+            )
+
+    def _show_welcome_if_first_run(self) -> None:
+        """Show a short one-time guide the first time the app is opened."""
+        if self._settings.get("first_run_done"):
+            return
+        QMessageBox.information(
+            self,
+            "Welcome!",
+            "<b>Welcome to Video Download Manager!</b><br><br>"
+            "Downloading is three steps:<br>"
+            "1. <b>Paste</b> one or more video links into the box at the top.<br>"
+            "2. Pick <b>MP4 video</b> or <b>MP3 audio</b> (and a quality).<br>"
+            "3. Click <b>Start Downloads</b>.<br><br>"
+            f"Files are saved to <b>{self._download_dir}</b> — use "
+            "<i>Choose Folder</i> to change that anytime.<br><br>"
+            "Everything the app needs is already included. Happy downloading!",
+        )
+        self._settings.set("first_run_done", True)
 
     # -- Format/quality interaction ---------------------------------------
 
@@ -316,10 +358,21 @@ class MainWindow(QWidget):
 
     def _on_add_to_queue(self) -> None:
         """Validate the URL input and append items to the queue."""
+        self._add_urls_from_input(interactive=True)
+
+    def _add_urls_from_input(self, interactive: bool) -> int:
+        """Queue every URL currently in the input box; return the count added.
+
+        ``interactive`` controls whether an empty/invalid input pops a warning
+        dialog. ``_on_start`` also calls this silently so users can paste
+        links and click "Start Downloads" directly, without needing to know
+        about "Add to Queue" first.
+        """
         raw = self._url_input.toPlainText().strip()
         if not raw:
-            self._warn("Please enter at least one video URL.")
-            return
+            if interactive:
+                self._warn("Please enter at least one video URL.")
+            return 0
 
         fmt: OutputFormat = self._format_combo.currentData()
         video_quality: VideoQuality = self._video_quality_combo.currentData()
@@ -362,11 +415,12 @@ class MainWindow(QWidget):
             )
         elif added:
             self._set_status(f"Added {added} URL(s) to the queue.")
-        else:
+        elif interactive:
             self._warn(
                 "None of the entered lines looked like valid URLs. "
                 "URLs should start with http:// or https://."
             )
+        return added
 
     @staticmethod
     def _looks_like_url(text: str) -> bool:
@@ -458,14 +512,27 @@ class MainWindow(QWidget):
             self._settings.set("download_directory", directory)
             self._set_status(f"Save location set to: {directory}")
 
+    def _on_open_folder(self) -> None:
+        """Open the current download folder in the system file manager."""
+        if not self._download_dir or not os.path.isdir(self._download_dir):
+            self._warn("The download folder does not exist yet. Choose one first.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self._download_dir))
+
     # -- Start / cancel ----------------------------------------------------
 
     def _on_start(self) -> None:
         """Begin processing the queue on a background thread."""
         if self._is_running():
             return
+        # Convenience: URLs still sitting in the input box are queued
+        # automatically, so pasting a link and hitting Start "just works".
+        self._add_urls_from_input(interactive=False)
         if not self._items:
-            self._warn("The queue is empty. Add at least one URL first.")
+            self._warn(
+                "Paste at least one video URL into the box at the top, "
+                "then click Start Downloads."
+            )
             return
         if not self._download_dir:
             self._warn("Please choose a save location first.")
@@ -531,6 +598,12 @@ class MainWindow(QWidget):
             status_cell = self._table.item(row, COL_STATUS)
             if status_cell is not None and detail:
                 status_cell.setToolTip(detail)
+        # Mirror the live speed/ETA detail in the status bar so progress is
+        # visible without hovering over the table.
+        if detail:
+            item = self._item_by_id.get(item_id)
+            title = (item.title or item.url) if item is not None else ""
+            self._set_status(f"{detail} — {title}" if title else detail)
 
     @Slot(int, str, str)
     def _on_worker_status(

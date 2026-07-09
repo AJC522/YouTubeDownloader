@@ -1,18 +1,18 @@
 <#
-    Video Download Manager - setup / startup script (Windows / PowerShell)
+    Video Download Manager - one-step setup & launch (Windows / PowerShell)
     ----------------------------------------------------------------------
-    Installs and updates everything the app needs in one step:
-      1. A Python virtual environment (.venv)
-      2. The Python dependencies from requirements.txt (upgraded to the latest
-         allowed versions)
-      3. ffmpeg (external system dependency) via winget or Chocolatey,
-         installing it if missing or updating it if already present
+    Easiest way to run: double-click setup.bat (it runs this script).
 
-    Re-running this script is safe: it brings an existing setup up to date.
+    Or from a PowerShell prompt in the project folder:
+      ./setup.ps1              # set up / update, then launch the app
+      ./setup.ps1 -SetupOnly   # set up / update, but don't launch
 
-    Usage (from a PowerShell prompt in the project folder):
-      ./setup.ps1            # set up / update, then exit
-      ./setup.ps1 -Run       # set up / update, then launch the app
+    The script creates a private Python environment (.venv) and installs or
+    updates all dependencies - including a bundled ffmpeg, so there is nothing
+    else to install.
+
+    Re-running it is always safe: it updates an existing install (useful when
+    downloads stop working because a site changed and yt-dlp needs updating).
 
     If you get an execution-policy error, run PowerShell once as:
       powershell -ExecutionPolicy Bypass -File .\setup.ps1
@@ -20,7 +20,8 @@
 
 [CmdletBinding()]
 param(
-    [switch]$Run
+    [switch]$Run,       # Kept for backwards compatibility; launching is now the default.
+    [switch]$SetupOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,13 +52,13 @@ foreach ($candidate in @('python', 'python3', 'py')) {
 
 if (-not $Python) {
     Write-Err 'Python 3.9+ is required but was not found on your PATH.'
-    Write-Err 'Install Python from https://www.python.org/downloads/ and re-run this script.'
+    Write-Err 'Install Python from https://www.python.org/downloads/ (tick "Add Python to PATH"), then re-run this script.'
     exit 1
 }
 Write-Info "Using Python: $(& $Python --version 2>&1)"
 
 # ---------------------------------------------------------------------------
-# 2. Create / reuse the virtual environment and upgrade Python dependencies
+# 2. Create / reuse the virtual environment and install dependencies
 # ---------------------------------------------------------------------------
 if (-not (Test-Path $VenvDir)) {
     Write-Info "Creating virtual environment in $VenvDir"
@@ -69,64 +70,44 @@ if (-not (Test-Path $VenvDir)) {
 # Use the venv's interpreter directly (avoids needing to 'activate').
 $VenvPy = Join-Path $VenvDir 'Scripts\python.exe'
 
-Write-Info 'Upgrading pip, setuptools and wheel'
-& $VenvPy -m pip install --quiet --upgrade pip setuptools wheel
+Write-Info 'Upgrading pip'
+& $VenvPy -m pip install --quiet --upgrade pip
 
-Write-Info 'Installing / upgrading Python dependencies from requirements.txt'
+Write-Info 'Installing / updating dependencies (GUI, yt-dlp and bundled ffmpeg)'
 # --upgrade pulls the newest versions permitted by requirements.txt so the
 # install stays current on every run.
 & $VenvPy -m pip install --upgrade -r requirements.txt
 
 # ---------------------------------------------------------------------------
-# 3. Install / update ffmpeg via winget or Chocolatey
+# 3. Verify everything the app needs is in place
 # ---------------------------------------------------------------------------
-function Install-Or-Update-FFmpeg {
-    if (Test-Command 'winget') {
-        $installed = (winget list --id Gyan.FFmpeg -e 2>$null | Select-String 'Gyan.FFmpeg')
-        if ($installed) {
-            Write-Info 'Updating ffmpeg via winget'
-            winget upgrade --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
-        } else {
-            Write-Info 'Installing ffmpeg via winget'
-            winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
-        }
-    } elseif (Test-Command 'choco') {
-        Write-Info 'Installing / updating ffmpeg via Chocolatey'
-        choco upgrade ffmpeg -y
-    } else {
-        Write-Warn 'Neither winget nor Chocolatey was found.'
-        Write-Warn 'Install one of them, or download ffmpeg from https://www.gyan.dev/ffmpeg/builds/'
-        Write-Warn 'and add its bin folder to your PATH.'
-    }
-}
+Write-Info 'Checking the installation'
+$check = @'
+import sys
+sys.path.insert(0, ".")
+from app.downloader import ffmpeg_source, ytdlp_version
 
-Install-Or-Update-FFmpeg
-
-# winget/choco may update PATH for new sessions only; refresh it for this one.
-$env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
-            [System.Environment]::GetEnvironmentVariable('Path', 'User')
-
-# Verify ffmpeg ended up on the PATH (mirrors the app's shutil.which check).
-if (Test-Command 'ffmpeg') {
-    $ver = (ffmpeg -version 2>$null | Select-Object -First 1)
-    Write-Info "ffmpeg is available: $ver"
+version = ytdlp_version()
+source, path = ffmpeg_source()
+print(f"    yt-dlp {version}")
+print(f"    ffmpeg: {source}" + (f" ({path})" if path else ""))
+sys.exit(0 if version and source != "missing" else 1)
+'@
+& $VenvPy -c $check
+if ($LASTEXITCODE -eq 0) {
+    Write-Info 'Everything is ready.'
 } else {
-    Write-Warn 'ffmpeg is installed but not yet visible on this PATH.'
-    Write-Warn 'Close and reopen your terminal, then run "ffmpeg -version" to confirm.'
+    Write-Warn 'Something is missing - see the lines above. Try re-running this script.'
 }
 
-Write-Info 'Setup complete.'
-
 # ---------------------------------------------------------------------------
-# 4. Optionally launch the application
+# 4. Launch the application
 # ---------------------------------------------------------------------------
-if ($Run) {
+if (-not $SetupOnly) {
     Write-Info 'Launching Video Download Manager'
     & $VenvPy -m app.main
 } else {
     Write-Host ''
-    Write-Info 'To run the app:'
-    Write-Host "    $VenvPy -m app.main"
-    Write-Info 'Or re-run this script with -Run to launch it now:'
-    Write-Host '    ./setup.ps1 -Run'
+    Write-Info 'Setup complete. To run the app later:'
+    Write-Host '    ./setup.ps1     (or double-click setup.bat)'
 }

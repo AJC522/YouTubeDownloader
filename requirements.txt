@@ -4,9 +4,11 @@
 # GUI framework (Qt for Python).
 PySide6>=6.6.0
 
-# Backend video/audio downloader. Kept reasonably fresh because sites change
-# frequently; upgrade with `pip install -U yt-dlp` if downloads start failing.
-yt-dlp>=2024.1.0
+# Backend video/audio downloader. Sites change frequently, so a recent version
+# matters; re-run the setup script or `pip install -U yt-dlp` if downloads
+# start failing.
+yt-dlp>=2025.9.26
 
-# NOTE: ffmpeg is an external system dependency (NOT a pip package) required for
-# MP3 extraction and MP4 muxing. See the README for installation instructions.
+# Bundles a static ffmpeg binary so users don't have to install ffmpeg
+# themselves. A system-wide ffmpeg on the PATH is used instead when present.
+imageio-ffmpeg>=0.5.1

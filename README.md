@@ -13,22 +13,64 @@ built with **Python** and **PySide6 (Qt)** on top of **yt-dlp** and **ffmpeg**.
 
 ---
 
+## Get started in one step
+
+The only thing you need installed beforehand is
+**[Python 3.9+](https://www.python.org/downloads/)** (on Windows, tick
+*"Add Python to PATH"* during install). Everything else — the GUI toolkit,
+the yt-dlp download engine, and even **ffmpeg** — is installed automatically.
+
+- **Windows:** double-click **`setup.bat`**
+- **macOS / Linux:** open a terminal in the project folder and run:
+
+  ```bash
+  ./setup.sh
+  ```
+
+That's it. The script sets up a private Python environment, installs/updates
+all dependencies, and launches the app. **Run the same script any time you want
+to open the app again** — it also keeps everything up to date, which matters
+because video sites change frequently and an out-of-date downloader is the most
+common cause of failing downloads.
+
+> No separate ffmpeg install is needed: a static ffmpeg binary ships with the
+> Python dependencies (via `imageio-ffmpeg`). If you already have ffmpeg on
+> your PATH, the app uses that instead.
+
+### Using the app
+
+1. **Paste one or more video links** into the box at the top (one per line).
+2. Pick **MP4 video** or **MP3 audio**, and a resolution/quality.
+3. Click **Start Downloads** — links still in the box are queued automatically.
+
+Files are saved to your **Downloads** folder by default; use **Choose Folder**
+to change that (remembered for next time) and **Open Folder** to jump straight
+to your downloaded files. A short welcome guide appears the first time you open
+the app.
+
+---
+
 ## Features
 
 - 🎛️ **Modern desktop GUI** — paste one or more URLs and manage everything from
   a single window.
+- 🚀 **Zero-config setup** — one script installs everything, including a
+  bundled ffmpeg; sensible defaults mean you can download immediately.
 - 📋 **Download queue** — queue multiple items, each showing its URL, format,
   resolution/quality, status, live progress, and final save location.
 - 🎬 **MP4 video** downloads with selectable resolution
   (Best available / 1080p / 720p / 480p / 360p). Unavailable resolutions fall
-  back automatically to the closest lower one.
+  back automatically to the closest lower one, and widely-compatible
+  H.264/AAC streams are preferred so files play everywhere.
 - 🎵 **MP3 audio** extraction with selectable bitrate
   (Best available / 320 / 192 / 128 kbps).
-- 🔁 **Sequential processing** by default, structured so parallel downloads can
-  be added later.
+- 🔁 **Automatic retry** with a more compatible format when the preferred one
+  isn't offered for a video.
 - 🗂️ **Status tracking** — Pending, Downloading, Completed, Failed, Canceled,
-  with colour cues and per-row progress bars.
-- 📁 **Native folder picker** with a remembered last-used location.
+  with colour cues, per-row progress bars, and live speed/ETA in the status
+  bar.
+- 📁 **Native folder picker** with a remembered last-used location and an
+  **Open Folder** shortcut.
 - ⏸️ **Start** and **Pause/Cancel** controls, plus **Remove** and **Clear**.
 - 🛡️ **Graceful error handling** for invalid URLs, private/age-restricted/
   removed videos, network failures, and unsupported formats — with friendly
@@ -49,6 +91,9 @@ YouTubeDownloader/
 │   ├── settings.py     # Persistent JSON settings
 │   └── logger.py       # Rotating-file logging setup
 ├── assets/             # Icons / images
+├── setup.sh            # One-step setup & launch (macOS / Linux)
+├── setup.ps1           # One-step setup & launch (Windows PowerShell)
+├── setup.bat           # Double-clickable wrapper for setup.ps1 (Windows)
 ├── requirements.txt
 └── README.md
 ```
@@ -58,49 +103,9 @@ run on a background thread so the interface never freezes.
 
 ---
 
-## Requirements
+## Manual setup (optional)
 
-- **Python 3.9+**
-- **PySide6** and **yt-dlp** (installed via `requirements.txt`)
-- **ffmpeg** (external system dependency, required for MP3 extraction and for
-  muxing high-resolution MP4 streams)
-
----
-
-## Installation
-
-### Quick start (automated setup script)
-
-The repository ships with a one-step setup script that creates a virtual
-environment, installs/upgrades the Python dependencies, **and** installs or
-updates **ffmpeg** via your platform's package manager. Re-running it brings an
-existing install up to date.
-
-- **macOS / Linux**
-
-  ```bash
-  ./setup.sh          # set up / update
-  ./setup.sh --run    # set up / update, then launch the app
-  ```
-
-- **Windows (PowerShell)**
-
-  ```powershell
-  ./setup.ps1         # set up / update
-  ./setup.ps1 -Run    # set up / update, then launch the app
-  # If you hit an execution-policy error:
-  #   powershell -ExecutionPolicy Bypass -File .\setup.ps1
-  ```
-
-The script uses Homebrew on macOS; apt/dnf/pacman/zypper/apk on Linux; and
-winget or Chocolatey on Windows. If none of those package managers is present,
-it prints manual ffmpeg install instructions and continues.
-
-Prefer to do it by hand? Follow the manual steps below.
-
-### Manual setup
-
-### 1. Clone and create a virtual environment
+Prefer to manage the environment yourself? All the setup script really does is:
 
 ```bash
 git clone https://github.com/ajc522/youtubedownloader.git
@@ -109,61 +114,14 @@ cd youtubedownloader
 python -m venv .venv
 # Windows:        .venv\Scripts\activate
 # macOS / Linux:  source .venv/bin/activate
-```
 
-### 2. Install the Python dependencies
-
-```bash
 pip install -r requirements.txt
-```
-
-### 3. Install ffmpeg
-
-ffmpeg is **not** a Python package and must be installed separately.
-
-- **Windows**
-  - With [winget](https://learn.microsoft.com/windows/package-manager/):
-    `winget install Gyan.FFmpeg`
-  - Or with [Chocolatey](https://chocolatey.org/): `choco install ffmpeg`
-  - Or download a build from <https://www.gyan.dev/ffmpeg/builds/> and add its
-    `bin` folder to your `PATH`.
-- **macOS** (with [Homebrew](https://brew.sh/)): `brew install ffmpeg`
-- **Linux**
-  - Debian/Ubuntu: `sudo apt install ffmpeg`
-  - Fedora: `sudo dnf install ffmpeg`
-  - Arch: `sudo pacman -S ffmpeg`
-
-Verify it is on your `PATH`:
-
-```bash
-ffmpeg -version
-```
-
-The application checks for ffmpeg on startup and before each download, and shows
-a clear message if it is missing.
-
----
-
-## Usage
-
-From the project root (with your virtual environment active):
-
-```bash
 python -m app.main
 ```
 
-Then:
-
-1. **Paste one or more video URLs** into the text box (one per line).
-2. Choose the **Format** (MP4 video or MP3 audio) and the
-   **Resolution / Audio quality**.
-3. Click **Add to Queue**. Invalid or empty URLs are skipped with a notice.
-4. Click **Choose Folder** to pick where files are saved (remembered for next
-   time).
-5. Click **Start Downloads**. Watch progress and status update live in the
-   queue.
-6. Use **Pause / Cancel** to stop, **Remove Selected** to drop items, or
-   **Clear Queue** to empty it.
+`requirements.txt` pulls in **PySide6** (GUI), **yt-dlp** (download engine) and
+**imageio-ffmpeg** (bundled ffmpeg binary). A system-wide ffmpeg on your `PATH`
+is used in preference to the bundled one when present, but is not required.
 
 ---
 
@@ -178,7 +136,8 @@ hardcoded paths):
 
 It contains:
 
-- `settings.json` — last download folder and last format/quality choices.
+- `settings.json` — last download folder, last format/quality choices, and the
+  first-run flag.
 - `video_download_manager.log` — rotating technical log for troubleshooting.
 
 ---
@@ -197,11 +156,12 @@ a pool of workers could be introduced to enable parallel downloads.
 
 | Symptom | Likely cause / fix |
 | --- | --- |
-| "ffmpeg was not found" | Install ffmpeg and ensure it is on your `PATH`. |
-| "yt-dlp is not installed" | Run `pip install -r requirements.txt`. |
-| "requested format/resolution not available" | Try **Best available** or a lower resolution. |
-| Downloads suddenly fail for a site | Update yt-dlp: `pip install -U yt-dlp`. |
-| Need more detail | Check `video_download_manager.log` in the config directory. |
+| Downloads suddenly fail / "the site rejected the download" | The site changed and yt-dlp needs updating. Re-run the setup script (`./setup.sh` / `setup.bat`) — it updates everything. |
+| "Setup is incomplete" warning on startup | A dependency didn't install. Re-run the setup script, or `pip install -r requirements.txt`. |
+| "requested format/resolution not available" | The app already retries with a compatible format automatically; if it still fails, try **Best available**. |
+| MP3 conversion fails | ffmpeg is missing — re-run the setup script to restore the bundled copy. |
+| Nothing happens on double-clicking `setup.bat` | Install Python from <https://www.python.org/downloads/> and tick *"Add Python to PATH"*, then try again. |
+| Need more detail | Check `video_download_manager.log` in the config directory (paths above). |
 
 ---
 
